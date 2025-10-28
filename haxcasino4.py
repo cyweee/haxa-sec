@@ -9,7 +9,6 @@ TRIES_PER_CHAR = 3
 
 
 def check_char(known_prefix, char_to_test):
-    # build guess: known + candidate + zero padding to reach fixed length
     padding = "0" * (NUMBER_LEN - len(known_prefix) - 1)
     guess = f"{known_prefix}{char_to_test}{padding}\n"
 
@@ -20,7 +19,6 @@ def check_char(known_prefix, char_to_test):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((HOST, PORT))
 
-            # read banner/prompt if any
             s.recv(1024)
 
             start_time = time.perf_counter()
@@ -73,7 +71,6 @@ def main():
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((HOST, PORT))
 
-        # print server banner/prompt
         print(s.recv(1024).decode().strip())
 
         s.sendall(f"{known_number}\n".encode())
