@@ -1,4 +1,4 @@
-// save as exploit.js
+// NOT DONE YET
 import fetch from 'node-fetch';
 
 const BASE_URL = "http://16.16.128.251:63417";
