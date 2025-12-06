@@ -1,39 +1,64 @@
 from PIL import Image
-import numpy as np
+import re
 
 
-def extract_bit_plane(image_path, bit_index):
-    # bit_index: 0 pro LSB, 1 pro další, atd.
+def solve_pixels(image_path):
+    print(f"Analyzuji: {image_path}")
+    try:
+        img = Image.open(image_path)
+        pixels = img.load()
+        width, height = img.size
+    except Exception as e:
+        print(f"Chyba: {e}")
+        return
 
-    img = Image.open(image_path)
-    data = np.array(img)
+    # Řetězce pro jednotlivé kanály
+    text_r = ""
+    text_g = ""
+    text_b = ""
 
-    print(f"Analyzuji bitovou rovinu {bit_index} (Bit Plane {bit_index})")
+    # Procházíme pixely a převádíme barvu přímo na znak
+    # Například: hodnota barvy 104 = znak 'h'
+    for y in range(height):
+        for x in range(width):
+            r, g, b = pixels[x, y]
 
-    channels = ['Red', 'Green', 'Blue']
+            # Převedeme na znak pouze pokud je to tisknutelné (pro čistší výstup)
+            # ASCII 32-126 jsou čitelné znaky
+            text_r += chr(r) if 32 <= r <= 126 else ""
+            text_g += chr(g) if 32 <= g <= 126 else ""
+            text_b += chr(b) if 32 <= b <= 126 else ""
 
-    # 2**bit_index je maska pro daný bit (např. 2 pro Bit 1, 4 pro Bit 2)
-    mask = 2 ** bit_index
+    print("\n--- HLEDÁNÍ VLAJKY ---")
 
-    for i, channel_name in enumerate(channels):
-        channel_data = data[:, :, i]
+    # Funkce pro hledání a výpis
+    def find_flag(channel_name, text):
+        # Hledáme haxagon{...} nebo hexagon{...}
+        match = re.search(r"(haxagon\{.*?\})", text, re.IGNORECASE)
+        if match:
+            print(f"✅ Vlajka nalezena v kanálu {channel_name}:")
+            print(f"🚩 {match.group(1)}")
+            return True
+        return False
 
-        # 1. Izolace bitu: (channel_data & mask)
-        # 2. Posun bitu: // mask (vrátí buď 0, nebo 1)
-        # 3. Zesílení: * 255 (pro vytvoření černobílého obrazu)
-        bit_plane = ((channel_data & mask) // mask) * 255
+    found = False
+    found |= find_flag("ČERVENÝ (Red)", text_r)
+    found |= find_flag("ZELENÝ (Green)", text_g)
+    found |= find_flag("MODRÝ (Blue)", text_b)
 
-        # Vytvoření a uložení nového obrázku
-        result_img = Image.fromarray(bit_plane.astype(np.uint8))
-        output_filename = f"odhaleny_{channel_name}_Bit{bit_index}.png"
-        result_img.save(output_filename)
-        print(f"--> Uložen: {output_filename} (ZKONTROLUJ tento soubor!)")
+    if not found:
+        print("Vlajka nebyla nalezena přímým převodem.")
+        print("Zkouším vypsat začátky kanálů, jestli neuvidíme vzor:")
+        print(f"R: {text_r[:50]}")
+        print(f"G: {text_g[:50]}")
+        print(f"B: {text_b[:50]}")
+
+        # Tip: Někdy je text pozpátku
+        print("\nZkouším text pozpátku...")
+        find_flag("R (Reverse)", text_r[::-1])
+        find_flag("G (Reverse)", text_g[::-1])
+        find_flag("B (Reverse)", text_b[::-1])
 
 
-# --- SPUSŤ TENTO NOVÝ KÓD ---
-
-# Zkusíme extrahovat Bit 1 (druhý nejméně významný)
-extract_bit_plane("noise.bmp", 1)
-
-# Zkusíme extrahovat Bit 2, jen pro jistotu
-# extract_bit_plane("noise.bmp", 2)
+# Spuštění
+solve_pixels("/home/cywe/PycharmProjects/haxagon-sec/noise.bmp")
