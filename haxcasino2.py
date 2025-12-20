@@ -1,99 +1,156 @@
 import requests
 import time
-import sys
+import re
 
-BASE_URL = "http://16.16.128.251:63417"
-TARGET_BALANCE = 1000000000
-
-
-# --- LCG генератор ---
-def get_next_seed(seed):
-    return (1103515245 * seed + 12345) % (2 ** 31)
+# !!! ZKONTROLUJTE, ZDA BĚŽÍ NOVÁ INSTANCE A MÁTE SPRÁVNOU IP !!!
+BASE_URL = "http://13.60.203.38:63417"
 
 
-def get_guess_from_seed(seed):
-    return (seed % 10) + 1
+class HaXasinoPredictor:
+    def __init__(self, seed):
+        self.seed = seed
+
+    def generate_number(self):
+        # SIMULACE JAVASCRIPT CHYBY (Precision Loss)
+        # JS používá 64-bitové floaty (doubles), které při násobení velkých čísel
+        # ztrácejí přesnost. Python int je přesný, proto musíme použít float().
+
+        # Původní JS: this.seed = (1103515245 * this.seed + 12345) % (2**31);
+
+        # 1. Převedeme na float a vynásobíme (tady vzniká ta nepřesnost jako v JS)
+        val = 1103515245.0 * float(self.seed)
+
+        # 2. Přičteme
+        val += 12345.0
+
+        # 3. Modulo (zbytek po dělení)
+        val %= 2147483648.0  # 2**31
+
+        # Výsledek uložíme jako int pro další kolo (protože po modulu už je číslo malé)
+        self.seed = int(val)
+
+        # Výpočet herního čísla
+        return (self.seed % 10) + 1
 
 
-# --------------------
+def parse_response(text):
+    """Parsuje odpověď a vrací: (vygenerované_číslo, zůstatek)"""
+    try:
+        # Hledání čísla, co padlo
+        num_match = re.search(r"Casino number:\s*(\d+)", text)
+        random_number = int(num_match.group(1)) if num_match else None
 
-def run_exploit():
-    print("[+] Пытаюсь синхронизировать время...")
-    base_seed = int(time.time())
+        # Hledání zůstatku
+        bal_match = re.search(r"Your balance:\s*(\d+)", text)
+        balance = int(bal_match.group(1)) if bal_match else None
+
+        return random_number, balance
+    except Exception:
+        return None, None
+
+
+def solve():
+    print(f"[*] Cíl: {BASE_URL}")
+    print("[*] 1. Registrace a získání tokenu...")
+
+    estimated_time = int(time.time())
 
     try:
-        r = requests.get(f"{BASE_URL}/generate_token")
-        token_text = r.text
-        token = token_text.split('is: ')[1].split('\n')[0]
-    except requests.exceptions.RequestException as e:
-        print(f"[X] Не могу подключиться к серверу: {e}")
-        sys.exit(1)
-
-    print(f"[+] Получен токен: {token}")
-    print(f"[+] Локальный base_seed: {base_seed}. Тестирую...")
-
-    synced_seed_state = 0
-    current_balance = 1000
-    headers = {'Authorization': token, 'Content-Type': 'application/json'}
-
-    # --- Шаг 1: Синхронизация ---
-    for offset in [-1, 0, 1]:
-        test_seed = base_seed + offset
-
-        first_seed_state = get_next_seed(test_seed)
-        predicted_guess = get_guess_from_seed(first_seed_state)
-
-        print(f"[?] Тестирую seed: {test_seed} (предсказание: {predicted_guess})...")
-
-        try:
-            r = requests.post(f"{BASE_URL}/play", headers=headers, json={"bet": 1, "guess": predicted_guess})
-            result = r.json()
-        except requests.exceptions.RequestException as e:
-            print(f"[X] Ошибка во время игры: {e}")
-            continue
-
-        if result.get("win"):
-            print(f"[!!!] СИНХРОНИЗИРОВАНО! Правильный seed: {test_seed}")
-            print(f"[+] Сервер выбросил {result.get('randomNumber')}, мы выиграли!")
-            synced_seed_state = first_seed_state
-            current_balance = 1001  # 1000 + 1 (выигрыш)
-            break
+        r = requests.get(f"{BASE_URL}/generate_token", timeout=10)
+        match = re.search(r"token is: ([a-f0-9]+)", r.text)
+        if match:
+            token = match.group(1)
+            print(f"[+] Token: {token}")
         else:
-            print(f"[-] ...неудача для {test_seed}. Сервер: {result.get('randomNumber')}")
-
-    if synced_seed_state == 0:
-        print("[X] Не удалось синхронизировать seed. Попробуй запустить скрипт еще раз.")
+            print("[-] Token nenalezen. Restartuj instanci.")
+            return
+    except Exception as e:
+        print(f"[-] Chyba připojení: {e}")
         return
 
-    # --- Шаг 2: All-in ---
-    current_seed = synced_seed_state
+    headers = {"Authorization": token, "Content-Type": "application/json"}
 
-    while current_balance < TARGET_BALANCE:
-        current_seed = get_next_seed(current_seed)
-        guess = get_guess_from_seed(current_seed)
+    print("[*] 2. Získávám vzorek dat (2 kola pro jistotu)...")
+
+    # --- KROK A: Získáme první číslo ---
+    r1 = requests.post(f"{BASE_URL}/play", json={"bet": 1, "guess": 1}, headers=headers)
+    num1, bal1 = parse_response(r1.text)
+    if num1 is None:
+        print("[-] Chyba při 1. sázce.")
+        print(r1.text)
+        return
+    print(f"    -> 1. číslo serveru: {num1}")
+
+    # --- KROK B: Získáme druhé číslo ---
+    r2 = requests.post(f"{BASE_URL}/play", json={"bet": 1, "guess": 1}, headers=headers)
+    num2, bal2 = parse_response(r2.text)
+    if num2 is None:
+        print("[-] Chyba při 2. sázce.")
+        return
+    print(f"    -> 2. číslo serveru: {num2}")
+
+    print("[*] 3. Hledám seed (s emulací JS Float math)...")
+
+    found_predictor = None
+
+    # Rozsah hledání +/- 200 sekund (pro jistotu)
+    for offset in range(-200, 200):
+        test_seed = estimated_time + offset
+        predictor = HaXasinoPredictor(test_seed)
+
+        # Simulujeme hru:
+        gen1 = predictor.generate_number()
+        gen2 = predictor.generate_number()
+
+        if gen1 == num1 and gen2 == num2:
+            print(f"[+] SEED NALEZEN! Offset: {offset}s (Seed: {test_seed})")
+            found_predictor = predictor
+            break
+
+    if not found_predictor:
+        print("[-] Seed stále nenalezen. Zkuste znovu vygenerovat token.")
+        return
+
+    print(f"[*] Aktuální zůstatek: ${bal2}")
+    print("[*] 4. Jdeme si pro miliardu (All-in)...")
+
+    current_balance = bal2
+
+    while current_balance < 1000000000:
+        # Predikce DALŠÍHO čísla
+        next_val = found_predictor.generate_number()
+
+        # Vsadíme všechno
         bet = current_balance
-
-        print(f"[+] Баланс: ${current_balance}. Ставлю ${bet} на {guess}...")
+        if bet <= 0:
+            print("[-] Máš 0 peněz. Game Over.")
+            break
 
         try:
-            r = requests.post(f"{BASE_URL}/play", headers=headers, json={"bet": bet, "guess": guess})
-            result = r.json()
-        except Exception as e:
-            print(f"[X] Ошибка: {e}")
-            time.sleep(1)
-            continue
+            r = requests.post(f"{BASE_URL}/play", json={"bet": bet, "guess": next_val}, headers=headers)
 
-        if result.get("win"):
-            current_balance += bet
-            print(f"[+] ВЫИГРЫШ! Сервер: {result.get('randomNumber')}. Новый баланс: ${current_balance}")
-            if result.get("flag"):
-                print("\n[🏆🏆🏆] ЦЕЛЬ ДОСТИГНУТА! [🏆🏆🏆]")
-                print(f"[+] Флаг: {result.get('flag')}")
-                return
-        else:
-            print(f"[X] КРИТИЧЕСКАЯ ОШИБКА! Предсказание {guess} неверно, сервер: {result.get('randomNumber')}")
-            return
+            # Kontrola vlajky
+            if "HTB{" in r.text or "flag" in r.text.lower() or "vlajka" in r.text.lower():
+                print("\n" + "#" * 50)
+                print("VICTORY! VLAJKA NALEZENA:")
+                print(r.text)
+                print("#" * 50)
+                break
+
+            check_num, new_bal = parse_response(r.text)
+
+            if new_bal is not None:
+                current_balance = new_bal
+                print(f"[+] Výhra! Číslo: {next_val}, Zůstatek: ${current_balance}")
+            else:
+                print("[-] Divná odpověď (možná výhra bez vlajky?):")
+                print(r.text)
+                break
+
+        except Exception as e:
+            print(f"[-] Chyba: {e}")
+            break
 
 
 if __name__ == "__main__":
-    run_exploit()
+    solve()
