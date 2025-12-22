@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "ethers": "^6.16.0",
     "unicode-properties": "^1.4.1"
   }
 }
