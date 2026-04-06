@@ -1,89 +1,85 @@
 import re
 import sys
-from PIL import Image, ExifTags
+import os
+from PIL import Image
+from PIL.ExifTags import TAGS
 
 
-def find_flag_01(filename):
-    print(f"--- ЗАПУСК ПОИСКА ФЛАГА 01: {filename} ---")
-
-    try:
-        with open(filename, "rb") as f:
-            content = f.read()
-    except FileNotFoundError:
-        print("ОШИБКА: Файл не найден.")
+def analyze_haxagon(file_path):
+    if not os.path.exists(file_path):
+        print(f"[-] Soubor {file_path} nebyl nalezen.")
         return
 
-    found = False
+    print(f"[*] Startuji hloubkovou analýzu: {file_path}")
+    print("-" * 60)
 
-    # 1. ГЛУБОКИЙ ПОИСК ПО БАЙТАМ (Regex)
-    # Ищет haxagon{...} даже если он в странной кодировке
-    print("\n[1] Проверка бинарных строк...")
-    patterns = [
-        rb'haxagon\{[^}]+\}',  # Стандартный формат
-        rb'haxagon',  # Просто слово
-    ]
+    with open(file_path, "rb") as f:
+        data = f.read()
 
-    for p in patterns:
-        matches = re.findall(p, content, re.IGNORECASE)
-        for m in matches:
-            print(f"!!! НАЙДЕНО (Regex): {m.decode('utf-8', errors='ignore')}")
-            found = True
+    # 1. Agresivní hledání vlajky v různých kódováních
+    # ASCII / UTF-8
+    pattern_ascii = rb"haxagon\{.*?\}"
+    # UTF-16 Little Endian (časté v EXIFu: h.a.x.a.g.o.n.{. . .})
+    pattern_utf16 = rb"h\x00a\x00x\x00a\x00g\x00o\x00n\x00\{\x00.*?\x00\}"
 
-    # 2. ПРОВЕРКА ХВОСТА ФАЙЛА (EOF)
-    # JPEG заканчивается байтами FF D9. Всё, что после — скрыто.
-    print("\n[2] Проверка данных после конца файла (EOF)...")
-    eof_marker = b'\xff\xd9'
-    last_eof = content.rfind(eof_marker)
+    print("[*] Prohledávám binární data...")
 
-    if last_eof != -1 and last_eof + 2 < len(content):
-        hidden_data = content[last_eof + 2:]
-        print(f"[*] Найдены скрытые данные после изображения ({len(hidden_data)} байт)!")
-        print(f"[*] Содержимое (raw): {hidden_data[:100]}...")  # Показываем первые 100 байт
+    found_any = False
 
-        # Пробуем найти текст в хвосте
+    # Hledání ASCII
+    for match in re.finditer(pattern_ascii, data, re.IGNORECASE):
+        print(f"    [!!!] Nalezena ASCII vlajka: {match.group().decode('ascii', errors='ignore')}")
+        found_any = True
+
+    # Hledání UTF-16
+    for match in re.finditer(pattern_utf16, data):
         try:
-            text = hidden_data.decode('utf-8', errors='ignore').strip()
-            if "haxagon" in text or "flag" in text:
-                print(f"!!! НАЙДЕНО В ХВОСТЕ: {text}")
-                found = True
+            decoded = match.group().decode('utf-16le')
+            print(f"    [!!!] Nalezena UTF-16 vlajka: {decoded}")
+            found_any = True
         except:
-            pass
-    else:
-        print("[-] Лишних данных в конце файла нет.")
+            continue
 
-    # 3. ПРОВЕРКА МЕТАДАННЫХ (EXIF)
-    print("\n[3] Проверка скрытых комментариев в EXIF...")
+    # 2. Detailní EXIF analýza
+    print("\n[*] Kontroluji EXIF pole (hledám haxagon)...")
     try:
-        img = Image.open(filename)
+        img = Image.open(file_path)
         exif = img._getexif()
         if exif:
             for tag_id, value in exif.items():
-                tag = ExifTags.TAGS.get(tag_id, tag_id)
-                # Ищем в комментариях
-                if tag in ['UserComment', 'ImageDescription', 'XPComment']:
-                    print(f"[*] {tag}: {value}")
-                    if isinstance(value, bytes):
-                        val_str = value.decode(errors='ignore')
-                    else:
-                        val_str = str(value)
+                tag_name = TAGS.get(tag_id, tag_id)
+                val_str = str(value)
+                # Vypíšeme zajímavá pole, i když v nich není vlajka
+                if any(x in tag_name.lower() for x in ["model", "software", "comment", "artist", "description"]):
+                    print(f"    [EXIF] {tag_name}: {val_str}")
 
-                    if "haxagon" in val_str:
-                        print(f"!!! НАЙДЕНО В МЕТАДАННЫХ: {val_str}")
-                        found = True
+                if "haxagon" in val_str.lower():
+                    print(f"    [!!!] ZÁSAH V EXIFu ({tag_name}): {val_str}")
+                    found_any = True
         else:
-            print("[-] EXIF данные отсутствуют.")
+            print("    [-] Žádná EXIF data v souboru nejsou.")
     except Exception as e:
-        print(f"[-] Ошибка чтения EXIF: {e}")
+        print(f"    [-] Chyba při parsování EXIF: {e}")
 
-    print("\n------------------------------------------------")
-    if not found:
-        print("ИТОГ: Скрипт не нашел флаг в открытом виде.")
-        print("ВАЖНО: Это значит, что флаг зашифрован внутри пикселей.")
-        print("РЕШЕНИЕ: Тебе 100% нужен инструмент 'steghide'.")
-        print("ЕСЛИ НЕ СТАВИТСЯ НА ПК -> Иди на сайт: aperisolve.com")
-    else:
-        print("УСПЕХ: Проверь найденные строки выше.")
+    # 3. Kontrola "Trailing Data" (za značkou FF D9)
+    eof_marker = b"\xff\xd9"
+    last_idx = data.rfind(eof_marker)
+    if last_idx != -1 and last_idx < len(data) - 2:
+        extra = data[last_idx + 2:]
+        print(f"\n[*] Zjištěna data za koncem souboru ({len(extra)} bajtů).")
+        # Zkusíme najít text v těchto datech
+        extra_strings = re.findall(rb"haxagon\{.*?\}", extra, re.IGNORECASE)
+        for s in extra_strings:
+            print(f"    [!!!] Vlajka nalezena v 'trailing data': {s.decode('ascii', errors='ignore')}")
+            found_any = True
+
+    if not found_any:
+        print("\n[?] Vlajka 'haxagon{...}' nebyla nalezena automaticky.")
+        print("[?] Zkus: strings -e l " + file_path + " | grep haxagon")
 
 
 if __name__ == "__main__":
-    find_flag_01("crocodile.jpg")
+    if len(sys.argv) < 2:
+        print("Použití: python3 script.py <soubor>")
+    else:
+        analyze_haxagon(sys.argv[1])
