@@ -13,6 +13,7 @@
     "axios": "^1.13.2",
     "ethers": "^6.16.0",
     "unicode-properties": "^1.4.1",
+    "ws": "^8.20.0",
     "z3-solver": "^4.15.4"
   }
 }

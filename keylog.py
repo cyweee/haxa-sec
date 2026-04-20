@@ -1,67 +1,77 @@
-import sys
+import pyshark
 
-# Таблица маппинга USB HID кодов: код -> (обычный_символ, символ_с_шифтом)
-KEY_CODES = {
-    0x04: ('a', 'A'), 0x05: ('b', 'B'), 0x06: ('c', 'C'), 0x07: ('d', 'D'),
-    0x08: ('e', 'E'), 0x09: ('f', 'F'), 0x0a: ('g', 'G'), 0x0b: ('h', 'H'),
-    0x0c: ('i', 'I'), 0x0d: ('j', 'J'), 0x0e: ('k', 'K'), 0x0f: ('l', 'L'),
-    0x10: ('m', 'M'), 0x11: ('n', 'N'), 0x12: ('o', 'O'), 0x13: ('p', 'P'),
-    0x14: ('q', 'Q'), 0x15: ('r', 'R'), 0x16: ('s', 'S'), 0x17: ('t', 'T'),
-    0x18: ('u', 'U'), 0x19: ('v', 'V'), 0x1a: ('w', 'W'), 0x1b: ('x', 'X'),
-    0x1c: ('y', 'Y'), 0x1d: ('z', 'Z'),
-    0x1e: ('1', '!'), 0x1f: ('2', '@'), 0x20: ('3', '#'), 0x21: ('4', '$'),
-    0x22: ('5', '%'), 0x23: ('6', '^'), 0x24: ('7', '&'), 0x25: ('8', '*'),
-    0x26: ('9', '('), 0x27: ('0', ')'),
-    0x28: ('\n', '\n'), 0x2a: ('[BACK]', '[BACK]'), 0x2b: ('\t', '\t'),
-    0x2c: (' ', ' '), 0x2d: ('-', '_'), 0x2e: ('=', '+'), 0x2f: ('[', '{'),
-    0x30: (']', '}'), 0x32: ('#', '~'), 0x33: (';', ':'), 0x34: ('\'', '"'),
-    0x36: (',', '<'), 0x37: ('.', '>'), 0x38: ('/', '?')
+# Словарь для перевода USB HID кодов в символы (US клавиатура)
+# Содержит буквы, цифры и основные спецсимволы
+HID_KEY_MAP = {
+    0x04: 'a', 0x05: 'b', 0x06: 'c', 0x07: 'd', 0x08: 'e', 0x09: 'f',
+    0x0A: 'g', 0x0B: 'h', 0x0C: 'i', 0x0D: 'j', 0x0E: 'k', 0x0F: 'l',
+    0x10: 'm', 0x11: 'n', 0x12: 'o', 0x13: 'p', 0x14: 'q', 0x15: 'r',
+    0x16: 's', 0x17: 't', 0x18: 'u', 0x19: 'v', 0x1A: 'w', 0x1B: 'x',
+    0x1C: 'y', 0x1D: 'z',
+    0x1E: '1', 0x1F: '2', 0x20: '3', 0x21: '4', 0x22: '5', 0x23: '6',
+    0x24: '7', 0x25: '8', 0x26: '9', 0x27: '0',
+    0x2D: '-', 0x2E: '=', 0x2F: '[', 0x30: ']', 0x31: '\\', 0x32: '#',
+    0x33: ';', 0x34: '\'', 0x35: '`', 0x36: ',', 0x37: '.', 0x38: '/',
+    0x28: '\n', 0x2A: '[BACK]', 0x2B: '\t', 0x2C: ' '
 }
 
 
-def parse_usb_hex(filename):
-    result = ""
-    with open(filename, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+def analyze_usb_pcap(file_path):
+    print(f"[*] Анализируем файл: {file_path}...")
 
-            # Обработка разных форматов вывода (с двоеточиями и без)
-            if ':' in line:
-                parts = line.split(':')
-            else:
-                # Если это сплошная строка из tshark (напр. 02002f0000000000)
-                parts = [line[i:i + 2] for i in range(0, len(line), 2)]
+    # Открываем pcap файл и фильтруем только пакеты, содержащие данные USB (usb.capdata)
+    cap = pyshark.FileCapture(file_path, display_filter='usb.capdata')
+    extracted_text = ""
 
-            if len(parts) < 3:
-                continue
+    for packet in cap:
+        try:
+            # Получаем сырые данные (обычно строка вида "00:00:2f:00:00:00:00:00")
+            capdata = packet.usb.capdata
+            bytes_list = capdata.split(':')
 
-            modifier = int(parts[0], 16)  # Байт 0: модификаторы
-            key_code = int(parts[2], 16)  # Байт 2: сама клавиша
+            # Пакет клавиатуры USB HID состоит из 8 байт
+            if len(bytes_list) == 8:
+                modifier = int(bytes_list[0], 16)  # 1-й байт: модификаторы (Shift, Ctrl и т.д.)
+                keycode = int(bytes_list[2], 16)  # 3-й байт: код самой нажатой клавиши
 
-            if key_code == 0:
-                continue
+                # Игнорируем пакеты отпускания клавиши (когда keycode == 0)
+                if keycode > 0 and keycode in HID_KEY_MAP:
+                    char = HID_KEY_MAP[keycode]
 
-            # Проверяем, зажат ли Left Shift (0x02) или Right Shift (0x20)
-            shift = (modifier == 0x02 or modifier == 0x20)
+                    # Логика обработки зажатого Shift (0x02 - Left Shift, 0x20 - Right Shift)
+                    if modifier == 0x02 or modifier == 0x20:
+                        if char == '[':
+                            char = '{'
+                        elif char == ']':
+                            char = '}'
+                        elif char == '9':
+                            char = '('
+                        elif char == '0':
+                            char = ')'
+                        elif char == '-':
+                            char = '_'
+                        else:
+                            char = char.upper()
 
-            if key_code in KEY_CODES:
-                char = KEY_CODES[key_code][1] if shift else KEY_CODES[key_code][0]
+                    extracted_text += char
+        except AttributeError:
+            # Пропускаем пакеты, у которых нет нужных атрибутов
+            continue
 
-                if char == '[BACK]':
-                    result = result[:-1]  # Стираем последний символ при Backspace
-                else:
-                    result += char
+    cap.close()
 
-    return result
+    # Очистка вывода от дубликатов (в USB часто отправляется несколько одинаковых
+    # пакетов при удержании клавиши). Это простая очистка, в зависимости от дампа
+    # может потребоваться более сложная фильтрация.
+    clean_text = ""
+    for i in range(len(extracted_text)):
+        if i == 0 or extracted_text[i] != extracted_text[i - 1]:
+            clean_text += extracted_text[i]
+
+    print("[+] Расшифрованный текст (сырой):", extracted_text)
+    print("[+] Расшифрованный текст (очищенный от залипаний):", clean_text)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Использование: python usb_parser.py <файл_с_данными.txt>")
-        sys.exit(1)
-
-    print("\n[+] Расшифрованный текст:")
-    print(parse_usb_hex(sys.argv[1]))
-    print()
+if __name__ == "__main__":
+    # Укажи правильный путь к своему файлу
+    analyze_usb_pcap('keylogger_keys(2).pcap')
